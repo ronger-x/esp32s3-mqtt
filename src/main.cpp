@@ -1,25 +1,24 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include "ArduinoJson.h"
 #include "PubSubClient.h"
 #include <WiFiClientSecure.h>
 
 #define RGB_PIO 38
 static uint8_t s_led_state = 0;
-static uint8_t s_wifi_state = 0;
 /* wifi config */
-const char *ssid = "ronger";
-const char *password = "qwertyuiop";
+const char *ssid = "ronger6";
+const char *password = "D724b28ff.";
 
 const char *host = "mqtt.rymcu.com";
 const int port = 8883;
 const char *topic = "rymcu";
-unsigned long lastMsg = 0;
-#define MSG_BUFFER_SIZE	(50)
-char msg[MSG_BUFFER_SIZE];
-int value = 0;
+const char *mqttUser = "esp32s3";
+const char *mqttPassword = "esp32s3.";
+
 
 // load DigiCert Global Root CA ca_cert
-const char* ca_cert= \
+const char *ca_cert = \
 "-----BEGIN CERTIFICATE-----\n" \
 "MIIDrzCCApegAwIBAgIQCDvgVpBCRrGhdWrJWZHHSjANBgkqhkiG9w0BAQUFADBh\n" \
 "MQswCQYDVQQGEwJVUzEVMBMGA1UEChMMRGlnaUNlcnQgSW5jMRkwFwYDVQQLExB3\n" \
@@ -56,27 +55,65 @@ void setup_wifi() {
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
 
-    if (WiFi.waitForConnectResult(30000) != WL_CONNECTED) {
-        Serial.println("Connection Failed! Rebooting...");
+    while (WiFi.status() != WL_CONNECTED) {
         delay(500);
-    } else {
-//        randomSeed(micros());
-        Serial.println("");
-        Serial.println("WiFi connected");
-        Serial.println("IP address: ");
-        Serial.println(WiFi.localIP());
+        Serial.println("Connecting to WiFi..");
     }
+    randomSeed(micros());
+    Serial.println("");
+    Serial.println("WiFi connected");
+    Serial.println("IP address: ");
+    Serial.println(WiFi.localIP());
+}
+
+static void blink_led() {
+    /* If the addressable LED is enabled */
+    if (s_led_state) {
+        /* Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color */
+        neopixelWrite(RGB_PIO, 0, 255, 255);
+//        if (s_wifi_state) {
+//        } else {
+//            neopixelWrite(RGB_PIO, 255, 128, 0);
+//        }
+    } else {
+        /* Set all LED off to clear all pixels */
+        neopixelWrite(RGB_PIO, 0, 0, 0);
+    }
+}
+
+static void blink_led(int r, int g, int b) {
+    /* Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color */
+    neopixelWrite(RGB_PIO, r, g, b);
 }
 
 void callback(char *topic, byte *payload, unsigned int length) {
     Serial.print("Message arrived in topic: ");
     Serial.println(topic);
     Serial.print("Message:");
-    for (int i = 0; i < length; i++) {
-        Serial.print((char) payload[i]);
+    DynamicJsonDocument doc(length - 1);
+    DeserializationError error = deserializeJson(doc, payload, length);
+
+    if (error) {
+        Serial.print("deserializeJson() failed: ");
+        Serial.println(error.c_str());
+        return;
     }
-    Serial.println();
-    Serial.println("-----------------------");
+    // 配置 rgb
+    if (doc["rgb"]) {
+        int rgb_state = doc["rgb"]["state"];
+        // Switch on the LED if an 1 was received as first character
+        if (rgb_state) {
+            int r = doc["rgb"]["r"];
+            int g = doc["rgb"]["g"];
+            int b = doc["rgb"]["b"];
+            blink_led(r, g, b);
+            Serial.print("LED State is ON!\n");
+        } else {
+            s_led_state = rgb_state;
+            blink_led();
+            Serial.print("LED State is OFF!\n");
+        }
+    }
 }
 
 void reconnect() {
@@ -87,9 +124,9 @@ void reconnect() {
         // Create a random client ID
         String clientId = "ESP32-";
         clientId += String(random(0xffff), HEX);
-        if (client.connect(clientId.c_str())) {
+        if (client.connect(clientId.c_str(), mqttUser, mqttPassword)) {
             Serial.println("connected");
-            client.publish(topic, ("hello world, i am " + clientId).c_str());
+            client.publish("outTopic", ("hello world, i am " + clientId).c_str());
             client.subscribe(topic);
         } else {
             Serial.print("failed, rc=");
@@ -101,26 +138,7 @@ void reconnect() {
     }
 }
 
-static void blink_led() {
-    /* If the addressable LED is enabled */
-    if (s_led_state) {
-        /* Set the LED pixel using RGB from 0 (0%) to 255 (100%) for each color */
-        if (WiFi.status() == WL_CONNECTED) {
-            s_wifi_state = 1;
-            neopixelWrite(RGB_PIO, 0, 255, 255);
-        } else {
-            s_wifi_state = 0;
-            neopixelWrite(RGB_PIO, 255, 128, 0);
-        }
-    } else {
-        /* Set all LED off to clear all pixels */
-        neopixelWrite(RGB_PIO, 0, 0, 0);
-    }
-}
-
 void setup() {
-// write your initialization code here
-//    pinMode(RGB_PIO, OUTPUT);
     Serial.begin(115200);
     while (!Serial) { delay(100); }
 
@@ -132,28 +150,8 @@ void setup() {
 }
 
 void loop() {
-    // write your code here
-    blink_led();
-    s_led_state = !s_led_state;
-    //Check the current connection status
-    if ((WiFi.status() == WL_CONNECTED)) {
-        if (!client.connected()) {
-            reconnect();
-        }
-        client.loop();
+    if (!client.connected()) {
+        reconnect();
     }
-    unsigned long now = millis();
-    if (now - lastMsg > 2000) {
-        lastMsg = now;
-        ++value;
-        snprintf (msg, MSG_BUFFER_SIZE, "hello world #%d", value);
-        Serial.print("Publish message: ");
-        Serial.println(msg);
-        client.publish("outTopic", msg);
-    }
-    if (s_wifi_state == 1) {
-        delay(800);
-    } else {
-        delay(1000);
-    }
+    client.loop();
 }
