@@ -144,7 +144,11 @@ void callback(char *topic, byte *payload, unsigned int length) {
     Serial.print("Message arrived in topic: ");
     Serial.println(topic);
     Serial.print("Message:");
-    DynamicJsonDocument doc(length - 1);
+    if (length > 1024) {
+        Serial.print("Message too long!");
+        return;
+    }
+    DynamicJsonDocument doc(length + 1024);
     DeserializationError error = deserializeJson(doc, payload, length);
 
     if (error) {
